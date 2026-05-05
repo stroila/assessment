@@ -1,6 +1,6 @@
 # Assessment
 
-Below is a concise, structured description of **what this deployment does and how it works**, based on the provided Makefile-style workflow.
+Below is a concise, structured description of **what this deployment does and how it works**.
 
 ***
 
