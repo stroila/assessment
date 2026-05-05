@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+    <metadata>
+        <name>GraphMailer</name>
+        <type>plugin</type>
+        <creationDate>2026-03-23</creationDate>
+        <last_update>2026-03-23</last_update>
+        <author>Adrian Stroila</author>
+        <authorUrl>https://github.com/stroila/assessment.git</authorUrl>
+        <email>adrian@stroila.ca</email>
+        <license>Apache License 2.0 License</license>
+        <version>1.0.0</version>
+        <description><![CDATA[Core: Send Assessment emails via Microsoft Graph (Entra ID App-Only).]]></description>
+    </metadata>
+
+    <compatibility>
+        <version>6.0</version>
+        <version>5.0</version>
+    </compatibility>
+
+    <updaters disabled="disabled">
+    </updaters>
+</config>
