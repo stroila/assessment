@@ -1,138 +1,182 @@
 # Assessment
+## Podman-Based Application Deployment
 
-Below is a concise, structured description of **what this deployment does and how it works**.
+This project builds, scans, and deploys a **LimeSurvey PHP application** using **Podman**, **Source-to-Image (S2I)**, a **MySQL database**, and an **NGINX load balancer**. The setup is automated via a Makefile and uses isolated macvlan networks for each tier.
 
-***
+---
 
 ## Overview
 
-This deployment builds and runs a **containerized LimeSurvey-based assessment application** using **Podman**. It consists of:
+### Components
 
-*   A **PHP 8.2 application container** (custom-built)
-*   A **MySQL 8.4 database container** (Red Hat UBI image)
-*   A **Source-to-Image (S2I)-style build process**
-*   Optional **container image vulnerability scanning** with Trivy
+- **Application**: LimeSurvey (PHP 8.2, RHEL 9)
+- **Database**: MySQL 8.4 (RHEL 9)
+- **Load Balancer**: NGINX (RHEL 9)
+- **Container Runtime**: Podman
+- **Build Method**: Source-to-Image (S2I)
+- **Security Scanning**: Trivy
 
-The resulting system exposes:
+### Network Segmentation
 
-*   The web application on **HTTPS port 8443**
-*   The MySQL database on **port 3309 (host) → 3306 (container)**
+- Load Balancer network
+- Application network
+- Database network
 
-***
+---
 
-## Components
+## Prerequisites
 
-### Application Container
+- Podman
+- Git
+- Access to `registry.redhat.io`
+- Permission to create macvlan networks
+- Network interface `eth0` available on the host
 
-*   **Image name:** `assessment-app`
-*   **Base image:** `registry.redhat.io/rhel9/php-82`
-*   **Application:** LimeSurvey (cloned from GitHub)
-*   **Customizations:**
-    *   Branding (logo replacement)
-    *   OAuth2 authentication plugin
-    *   GraphMailer plugin
-    *   Patched PHPMailer implementation
-*   **Build method:** Podman build with image squashing
+---
 
-### Database Container
+## Configuration
 
-*   **Image:** `registry.redhat.io/rhel9/mysql-84`
-*   **Database name:** `assessment`
-*   **Database user:** `assessment`
-*   **Authentication:** Configured via environment variables at runtime
-*   **Purpose:** Backend persistence for LimeSurvey
+The following variables are defined in the Makefile:
 
-***
+```makefile
+IMAGE_NAME := app
 
-## Build and Deployment Workflow
+DB_USER    := assessment
+DB_NAME    := assessment
+DB_PASS    := "change-me"
+ROOT_PASS  := "change-me"
 
-### 1. Setup Phase (`make setup`)
+DB_VOLUME  := db-data
 
-*   Creates a working directory: `s2i/app-src`
-*   Pulls required Red Hat PHP and MySQL base images
-*   Clones the LimeSurvey repository
-*   Injects:
-    *   Custom logos
-    *   Authentication and mailing plugins
-    *   A patched PHPMailer file
-    *   A Dockerfile for the application build
+PHP_IMAGE_NAME   := registry.redhat.io/rhel9/php-82:1-1777884059
+DB_IMAGE_NAME    := registry.redhat.io/rhel9/mysql-84:1-1777466422
+PROXY_IMAGE_NAME := registry.redhat.io/rhel9/nginx-126:1-1777916570
 
-This stage effectively prepares a customized LimeSurvey source tree for containerization.
+S2I_DIR := s2i
+```
 
-***
+> **Important**: Change all credentials before production use.
 
-### 2. Build Phase (`make build`)
+---
 
-*   Builds the application image using Podman
-*   Uses `--squash` to flatten layers and reduce image size
-*   Mounts `/var/tmp` for temporary build artifacts
-*   Produces a final image tagged as `assessment-app`
+## Directory Layout
 
-***
+```text
+.
+├── Dockerfile
+├── Makefile
+├── images/
+│   └── logo-w.png
+├── lb/
+│   └── Dockerfile
+├── patch/
+│   └── PHPMailer.php
+├── plugins/
+│   ├── AuthOAuth2/
+│   └── GraphMailer/
+└── s2i/
+    └── app-src/
+```
 
-### 3. Security Scan (Optional) (`make scan`)
+---
 
-*   Runs **Trivy** vulnerability scans against:
-    *   The custom application image
-    *   The MySQL base image
-*   Reports only **HIGH** and **CRITICAL** vulnerabilities
-*   Uses Podman socket compatibility for scanning
+## Makefile Targets
 
-Purpose: validate container security before deployment.
+### all
 
-***
+Runs setup and build.
 
-### 4. Runtime Deployment (`make run`)
+```bash
+make all
+```
 
-#### Database
+---
 
-*   Starts MySQL container named `assessment-db`
-*   Configures database name, user, and credentials via environment variables
-*   Maps host port **3309 → 3306**
+### setup
 
-#### Application
+- Creates the S2I directory structure
+- Pulls required container images
+- Clones LimeSurvey
+- Applies branding, plugins, and patches
 
-*   Starts the application container named `assessment-app`
-*   Exposes HTTPS on **port 8443**
-*   Shares `/var/tmp` with the host (likely for uploads, caching, or S2I artifacts)
+```bash
+make setup
+```
 
-The application is expected to connect to the database container using the configured credentials.
+---
 
-***
+### build
 
-### 5. Cleanup (`make clean`)
+- Creates macvlan networks:
+  - `lb_net` – `192.168.0.0/30`
+  - `app_net` – `192.168.1.0/30`
+  - `db_net` – `192.168.2.0/30`
+- Creates a persistent MySQL volume
+- Builds the application and NGINX images
 
-*   Stops and removes both containers
-*   Deletes application and database images
-*   Removes the entire `s2i` build directory
+```bash
+make build
+```
 
-This returns the system to a clean state.
+---
 
-***
+### scan
 
-## Deployment Characteristics
+Runs Trivy vulnerability scans showing **HIGH** and **CRITICAL** issues.
 
-*   **Container runtime:** Podman (daemonless, rootless-capable)
-*   **Image sources:** Red Hat UBI (enterprise-supported)
-*   **Security posture:**
-    *   Explicit vulnerability scanning
-    *   Reproducible builds
-*   **Use case:** Internal or controlled assessment platform, not a managed cloud deployment
+```bash
+make scan
+```
 
-***
+---
 
-## Summary
+### run
 
-This deployment creates a **self-contained LimeSurvey assessment platform** with:
+Starts all containers:
 
-*   Custom branding and authentication
-*   Enterprise-grade Red Hat base images
-*   A simple, Makefile-driven lifecycle (build, scan, run, clean)
-*   Suitable for development, testing, or controlled production environments where Podman is preferred over Docker.
+| Service | Container | Host Port | Internal Port |
+|--------|-----------|-----------|---------------|
+| MySQL  | db        | 3308      | 3306          |
+| App    | app       | 8443      | 8443          |
+| NGINX  | lb        | 443       | 8443          |
 
-## Usage:
-  - make — clone source, apply logos, build image
-  - make scan — run Trivy vulnerability scan
-  - make run — start the container
-  - make clean — tear down container and image
+```bash
+make run
+```
 
+Access the application at:
+
+```
+https://<host-ip>:443
+```
+
+---
+
+### clean
+
+Stops and removes all containers, images, volumes, and build artifacts.
+
+```bash
+make clean
+```
+
+> **Warning**: This permanently deletes application data.
+
+---
+
+## Security Notes
+
+- Replace default passwords immediately
+- Run `make scan` regularly
+- Limit macvlan exposure in production
+- Secure host-mounted paths:
+  - `/opt/nginx`
+  - `/var/tmp`
+
+---
+
+## Licensing and Attribution
+
+- **LimeSurvey**: GPLv2
+- **Red Hat container images**: Red Hat subscription terms
+- **Trivy**: Aqua Security
