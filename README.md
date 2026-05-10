@@ -1,182 +1,151 @@
-# Assessment
-## Podman-Based Application Deployment
+Assessment Application – Podman Deployment
+==========================================
 
-This project builds, scans, and deploys a **LimeSurvey PHP application** using **Podman**, **Source-to-Image (S2I)**, a **MySQL database**, and an **NGINX load balancer**. The setup is automated via a Makefile and uses isolated macvlan networks for each tier.
+This project builds and deploys an Assessment (LimeSurvey-based) application
+using Podman. The stack uses S2I, macvlan networking, and Red Hat container
+images for PHP, MySQL, and NGINX.
 
----
+------------------------------------------------------------
+Architecture Overview
+------------------------------------------------------------
 
-## Overview
+The deployment consists of three containers:
 
-### Components
+- Application container (PHP / LimeSurvey)
+- Database container (MySQL 8.4)
+- Load balancer / reverse proxy (NGINX)
 
-- **Application**: LimeSurvey (PHP 8.2, RHEL 9)
-- **Database**: MySQL 8.4 (RHEL 9)
-- **Load Balancer**: NGINX (RHEL 9)
-- **Container Runtime**: Podman
-- **Build Method**: Source-to-Image (S2I)
-- **Security Scanning**: Trivy
+Each component runs on its own macvlan network with static IP addresses.
 
-### Network Segmentation
+Host
+ ├─ macvlan-shim
+ │   ├─ 192.168.1.6 (app_net access)
+ │   └─ 192.168.2.6 (db_net access)
+ │
+ ├─ app (192.168.1.5) ── app_net
+ ├─ db  (192.168.2.5) ── db_net
+ └─ lb  (443 → 8443)
 
-- Load Balancer network
-- Application network
-- Database network
+------------------------------------------------------------
+Configuration Variables
+------------------------------------------------------------
 
----
+IMAGE_NAME        := app
+DB_USER           := assessment
+DB_NAME           := assessment
+DB_PASS           := "change-me"
+ROOT_PASS         := "change-me"
+DB_VOLUME         := "db-data"
+IFC               := "eth0"
 
-## Prerequisites
+PHP_IMAGE_NAME    := registry.redhat.io/rhel9/php-82:1-1777884059
+DB_IMAGE_NAME     := registry.redhat.io/rhel9/mysql-84:1-1777466422
+PROXY_IMAGE_NAME  := registry.redhat.io/rhel9/nginx-126:1-1777916570
 
-- Podman
+S2I_DIR           := s2i
+
+IMPORTANT:
+Change database passwords before using this in production.
+
+------------------------------------------------------------
+Prerequisites
+------------------------------------------------------------
+
+- Podman (rootful mode required)
 - Git
-- Access to `registry.redhat.io`
-- Permission to create macvlan networks
-- Network interface `eth0` available on the host
+- A network interface supporting macvlan (default: eth0)
+- Internet access to pull container images
 
----
+------------------------------------------------------------
+Make Targets
+------------------------------------------------------------
 
-## Configuration
-
-The following variables are defined in the Makefile:
-
-```makefile
-IMAGE_NAME := app
-
-DB_USER    := assessment
-DB_NAME    := assessment
-DB_PASS    := "change-me"
-ROOT_PASS  := "change-me"
-
-DB_VOLUME  := db-data
-
-PHP_IMAGE_NAME   := registry.redhat.io/rhel9/php-82:1-1777884059
-DB_IMAGE_NAME    := registry.redhat.io/rhel9/mysql-84:1-1777466422
-PROXY_IMAGE_NAME := registry.redhat.io/rhel9/nginx-126:1-1777916570
-
-S2I_DIR := s2i
-```
-
-> **Important**: Change all credentials before production use.
-
----
-
-## Directory Layout
-
-```text
-.
-├── Dockerfile
-├── Makefile
-├── images/
-│   └── logo-w.png
-├── lb/
-│   └── Dockerfile
-├── patch/
-│   └── PHPMailer.php
-├── plugins/
-│   ├── AuthOAuth2/
-│   └── GraphMailer/
-└── s2i/
-    └── app-src/
-```
-
----
-
-## Makefile Targets
-
-### all
-
-Runs setup and build.
-
-```bash
 make all
-```
+  Runs setup and build stages.
 
----
-
-### setup
-
-- Creates the S2I directory structure
-- Pulls required container images
-- Clones LimeSurvey
-- Applies branding, plugins, and patches
-
-```bash
 make setup
-```
+  - Pulls PHP, MySQL, and NGINX images
+  - Clones LimeSurvey into the S2I directory
+  - Applies branding (logos)
+  - Installs custom plugins
+  - Patches PHPMailer
+  - Copies Dockerfile for S2I builds
 
----
-
-### build
-
-- Creates macvlan networks:
-  - `lb_net` – `192.168.0.0/30`
-  - `app_net` – `192.168.1.0/30`
-  - `db_net` – `192.168.2.0/30`
-- Creates a persistent MySQL volume
-- Builds the application and NGINX images
-
-```bash
 make build
-```
+  - Creates macvlan networks:
+      app_net (192.168.1.0/29)
+      db_net  (192.168.2.0/29)
+  - Creates macvlan shim interface for host connectivity
+  - Creates database volume if missing
+  - Builds application and load balancer images
 
----
-
-### scan
-
-Runs Trivy vulnerability scans showing **HIGH** and **CRITICAL** issues.
-
-```bash
 make scan
-```
+  - Scans images using Trivy
+  - Reports HIGH and CRITICAL vulnerabilities only
 
----
-
-### run
-
-Starts all containers:
-
-| Service | Container | Host Port | Internal Port |
-|--------|-----------|-----------|---------------|
-| MySQL  | db        | 3308      | 3306          |
-| App    | app       | 8443      | 8443          |
-| NGINX  | lb        | 443       | 8443          |
-
-```bash
 make run
-```
+  - Starts database container:
+      Network: db_net
+      IP:      192.168.2.5
+  - Starts application container:
+      Network: app_net
+      IP:      192.168.1.5
+  - Starts NGINX load balancer:
+      Exposes HTTPS on port 443
 
-Access the application at:
-
-```
-https://<host-ip>:443
-```
-
----
-
-### clean
-
-Stops and removes all containers, images, volumes, and build artifacts.
-
-```bash
 make clean
-```
+  - Removes containers
+  - Removes built images
+  - Deletes S2I working directory
 
-> **Warning**: This permanently deletes application data.
+------------------------------------------------------------
+Networking Notes
+------------------------------------------------------------
 
----
+- macvlan is required to support static IP addressing
+- Podman must run as root
+- macvlan-shim enables host-to-container communication
+- /29 subnets are used for minimal network exposure
 
-## Security Notes
+------------------------------------------------------------
+Volumes and Persistence
+------------------------------------------------------------
 
-- Replace default passwords immediately
-- Run `make scan` regularly
-- Limit macvlan exposure in production
-- Secure host-mounted paths:
-  - `/opt/nginx`
-  - `/var/tmp`
+- MySQL data is stored in the Podman volume:
+    db-data
 
----
+- NGINX configuration and logs:
+    /opt/nginx
+    /opt/nginx/logs
 
-## Licensing and Attribution
+------------------------------------------------------------
+Security Notes
+------------------------------------------------------------
 
-- **LimeSurvey**: GPLv2
-- **Red Hat container images**: Red Hat subscription terms
-- **Trivy**: Aqua Security
+- Image vulnerability scanning is included via Trivy
+- Credentials are stored in plaintext variables
+- TLS termination is handled by NGINX
+
+------------------------------------------------------------
+Troubleshooting
+------------------------------------------------------------
+
+Static IP issues:
+  - Ensure Podman is running rootful
+  - Verify macvlan support on the selected interface
+
+No host connectivity:
+  - Check macvlan-shim routes with `ip route`
+
+Database connection failures:
+  - Validate credentials
+  - Confirm correct network attachment
+
+------------------------------------------------------------
+License and Attribution
+------------------------------------------------------------
+
+- LimeSurvey © LimeSurvey GmbH
+- Container images provided by Red Hat
+- Custom plugins and patches are project-specific
+

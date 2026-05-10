@@ -4,6 +4,7 @@
  DB_PASS := "change-me"
  ROOT_PASS := "change-me"
  DB_VOLUME := "db-data"
+ IFC := "eth0"
  PHP_IMAGE_NAME := registry.redhat.io/rhel9/php-82:1-1777884059
  DB_IMAGE_NAME := registry.redhat.io/rhel9/mysql-84:1-1777466422
  PROXY_IMAGE_NAME := podman pull registry.redhat.io/rhel9/nginx-126:1-1777916570
@@ -27,9 +28,15 @@
 	cp Dockerfile $(S2I_DIR)/Dockerfile
   
   build: setup
-	podman network create -d macvlan --subnet=192.168.0.0/30 --gateway=192.168.0.1 -o parent=eth0 lb_net
-	podman network create -d macvlan --subnet=192.168.1.0/30 --gateway=192.168.1.1 -o parent=eth0 app_net
-	podman network create -d macvlan --subnet=192.168.2.0/30 --gateway=192.168.2.1 -o parent=eth0 db_net
+	podman network create -d macvlan --subnet=192.168.1.0/29 --gateway=192.168.1.1 -o parent=$(IFC) app_net
+	podman network create -d macvlan --subnet=192.168.2.0/29 --gateway=192.168.2.1 -o parent=$(IFC) db_net
+	# Enable Host ↔ Container Communication
+	ip link add macvlan-shim link $(IFC) type macvlan mode bridge
+	ip addr add 192.168.1.6/29 dev macvlan-shim
+	ip addr add 192.168.2.6/29 dev macvlan-shim
+	ip link set macvlan-shim up
+	ip route add 192.168.1.0/29 dev macvlan-shim
+	ip route add 192.168.2.0/29 dev macvlan-shim
 	podman volume exists $(DB_VOLUME) || podman volume create $(DB_VOLUME)
 	cd $(S2I_DIR) && podman build --squash -v /var/tmp:/var/tmp -t $(IMAGE_NAME) .
 	cd lb && podman build --squash -v /opt/nginx/:/opt/nginx -t nginx-app .
@@ -40,9 +47,9 @@
 	podman run --rm -v /run/podman/podman.sock:/var/run/docker.sock aquasec/trivy --insecure image --severity HIGH,CRITICAL localhost/nginx-app:latest
   
   run:
-	podman run -d --name db --restart=always --network db_net -e MYSQL_USER=$(DB_USER) -e MYSQL_PASSWORD=$(DB_PASS) -e MYSQL_DATABASE=$(DB_NAME) -e MYSQL_ROOT_PASSWORD=$(ROOT_PASS) -v $(DB_VOLUME):/var/lib/mysql/data -p 3308:3306 $(DB_IMAGE_NAME)
-	podman run -d --name app --restart=always --network app_net -v /var/tmp:/var/tmp -p 8443:8443 $(IMAGE_NAME)
-	podman run -d --name lb --restart=always --network lb_net -v /opt/nginx:/opt/nginx -v /opt/nginx/logs:/var/log/nginx -p 443:8443 localhost/nginx-app:latest
+	podman run -d --name db --restart=always --network db_net --ip 192.168.2.5 -e MYSQL_USER=$(DB_USER) -e MYSQL_PASSWORD=$(DB_PASS) -e MYSQL_DATABASE=$(DB_NAME) -e MYSQL_ROOT_PASSWORD=$(ROOT_PASS) -v $(DB_VOLUME):/var/lib/mysql/data $(DB_IMAGE_NAME)
+	podman run -d --name app --restart=always --network app_net --ip 192.168.1.5 -v /var/tmp:/var/tmp $(IMAGE_NAME)
+	podman run -d --name lb --restart=always -v /opt/nginx:/opt/nginx -v /opt/nginx/logs:/var/log/nginx -p 443:8443 localhost/nginx-app:latest
   
   clean:
 	podman rm -f app || true
