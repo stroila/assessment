@@ -1,34 +1,65 @@
 #!/bin/bash
+set -euo pipefail
+
+# --- Explicit environment for cron ---
+PATH=/usr/local/bin:/usr/bin:/bin
+HOME=/root
+HOST_USER=user
 
 DATE=$(date +%y-%m-%d)
 PASS="change-me"
-DB_HOST="192.168.2.2"
+HOST="HOST_IP"
+WORKDIR="/opt/backup"
+TMPDIR="${WORKDIR}/${DATE}"
+DB_USER="db"
 
-mkdir -p ${DATE}
-mnt=$(podman mount app)
-cp -R ${mnt}/opt/app-root/src/upload ${DATE}
-cp ${mnt}/opt/app-root/src/application/config/config.php ${DATE}
-cp ${mnt}/opt/app-root/src/application/config/security.php ${DATE}
-cp ${mnt}/opt/app-root/src/vendor/phpmailer/phpmailer/src/PHPMailer.php ${DATE}
-podman umount app
+mkdir -p "${TMPDIR}"
+cd "${WORKDIR}"
 
-mysqldump --no-tablespaces \
-          --user=ztap \
-          --password=${PASS} \
-          --database assessment \
-          --port=3308 \
-          --host=${DB_HOST} > ${DATE}/ztap-${DATE}.sql
+# --- Podman requires full path + correct user ---
+PODMAN=/usr/bin/podman
 
-cp -R /opt/nginx ${DATE}
-cp -R /etc/cloudflared ${DATE}
-tar cfvz ${DATE}.$$.tar.gz ${DATE}
-chown ztap:users ${DATE}.$$.tar.gz
-rm -rf ${DATE}
+mnt=$(${PODMAN} mount app)
 
-gpg --batch --yes --encrypt --recipient "email@example.com" ${DATE}.$$.tar.gz
-rm -f ${DATE}.$$.tar.gz
-chown ztap:users ${DATE}.$$.tar.gz.gpg
+cp -R "${mnt}/opt/app-root/src/upload" "${TMPDIR}/"
+cp "${mnt}/opt/app-root/src/application/config/config.php" "${TMPDIR}/"
+cp "${mnt}/opt/app-root/src/application/config/security.php" "${TMPDIR}/"
+cp "${mnt}/opt/app-root/src/vendor/phpmailer/phpmailer/src/PHPMailer.php" "${TMPDIR}/"
 
-# send the backup off site
-# su - ztap -c "scp -P 22 backup/${DATE}.$$.tar.gz.gpg user@offsite.com:backup"
+${PODMAN} umount app
+
+# --- mysqldump with full path ---
+/usr/bin/mysqldump \
+  --no-tablespaces \
+  --user=${DB_USER} \
+  --password="${PASS}" \
+  --databases db \
+  --port=3306 \
+  --host="${HOST}" \
+  > "${TMPDIR}/app-${DATE}.sql"
+
+cp -R /opt/nginx "${TMPDIR}/"
+cp -R /etc/cloudflared "${TMPDIR}/"
+
+ARCHIVE="${WORKDIR}/${DATE}.$$.tar.gz"
+tar czf "${ARCHIVE}" "${DATE}"
+chown ${HOST_USER}:users "${ARCHIVE}"
+
+rm -rf "${TMPDIR}"
+
+# --- gpg must be non-interactive ---
+/usr/bin/gpg \
+  --batch \
+  --yes \
+  --trust-model always \
+  --encrypt \
+  --recipient "user@example.com" \
+  "${ARCHIVE}"
+
+rm -f "${ARCHIVE}"
+chown ${HOST_USER}:users "${ARCHIVE}.gpg"
+
+# --- su needs -s to avoid TTY issues ---
+/bin/su -s /bin/bash ${HOST_USER} -c \
+  "/usr/bin/scp -P 22 '${ARCHIVE}.gpg' user@remote.com:backup"
 
